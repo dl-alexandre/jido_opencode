@@ -16,6 +16,38 @@ defmodule Jido.Opencode.Client do
           timeout: non_neg_integer()
         }
 
+  @default_base_url "http://127.0.0.1:4096"
+  @default_timeout 5000
+
+  @doc """
+  Creates a new client with default or custom configuration.
+
+  ## Options
+
+    * `:base_url` - Server URL (default: "http://127.0.0.1:4096")
+    * `:timeout` - Request timeout in ms (default: 5000)
+
+  ## Examples
+
+      {:ok, client} = Client.new()
+      {:ok, client} = Client.new(base_url: "http://localhost:4096", timeout: 10000)
+
+  """
+  @spec new(keyword()) :: {:ok, t()} | {:error, term()}
+  def new(opts \\ []) do
+    base_url = Keyword.get(opts, :base_url, @default_base_url)
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+
+    # Verify server is accessible
+    case health_check(base_url) do
+      {:ok, _} ->
+        {:ok, %Client{base_url: base_url, timeout: timeout}}
+
+      {:error, reason} ->
+        {:error, {:server_unavailable, reason, base_url: base_url}}
+    end
+  end
+
   @doc """
   Performs a health check to verify the OpenCode server is running.
   """
