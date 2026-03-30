@@ -34,8 +34,8 @@ defmodule Jido.Opencode.Adapter do
 
   @behaviour Jido.Harness.Adapter
 
-  alias Jido.Harness.{Capabilities, Error, Event, RunRequest, RuntimeContract}
-  alias Jido.Opencode.{Client, EventTranslator}
+  alias Jido.Harness.{Capabilities, Event, RunRequest, RuntimeContract}
+  alias Jido.Opencode.{Client, Compatibility, Error, EventTranslator, Options, SessionRegistry}
 
   require Logger
 
@@ -62,9 +62,11 @@ defmodule Jido.Opencode.Adapter do
 
   @impl true
   def run(%RunRequest{} = request, opts \\ []) do
-    with {:ok, client} <- ensure_client(opts),
+    with {:ok, normalized_opts} <- Options.from_run_request(request, opts),
+         {:ok, client} <- ensure_client(normalized_opts),
          {:ok, session} <- create_session(client, request),
-         {:ok, stream} <- run_prompt(client, session, request, opts) do
+         :ok <- SessionRegistry.register(session.id, self()),
+         {:ok, stream} <- run_prompt(client, session, request, normalized_opts) do
       events =
         stream
         |> Stream.map(&EventTranslator.translate/1)
@@ -72,6 +74,12 @@ defmodule Jido.Opencode.Adapter do
 
       {:ok, events}
     else
+      {:error, reason} when is_atom(reason) ->
+        {:error, Error.validation_error("Invalid request", %{field: reason})}
+
+      {:error, %{__exception__: true} = error} ->
+        {:error, error}
+
       {:error, reason} ->
         {:error, Error.execution_error("OpenCode run failed", %{reason: reason})}
     end
@@ -123,8 +131,17 @@ defmodule Jido.Opencode.Adapter do
 
   @impl true
   def cancel(session_id) do
-    with {:ok, client} <- ensure_client([]) do
-      Client.abort_session(client, session_id)
+    with {:ok, client} <- ensure_client([]),
+         {:ok, _owner_pid} <- SessionRegistry.lookup(session_id),
+         {:ok, _} <- Client.abort_session(client, session_id) do
+      SessionRegistry.unregister(session_id)
+      :ok
+    else
+      {:error, :not_found} ->
+        {:error, Error.execution_error("Session not found", %{session_id: session_id})}
+
+      error ->
+        error
     end
   end
 
@@ -155,9 +172,11 @@ defmodule Jido.Opencode.Adapter do
 
   """
   def run_with_schema(prompt, schema, opts \\ []) do
-    with {:ok, client} <- ensure_client(opts),
+    with {:ok, normalized_opts} <- Options.validate(opts),
+         {:ok, client} <- ensure_client(normalized_opts),
          {:ok, session} <- create_session(client, %{title: "Schema Output Session"}),
-         {:ok, stream} <- run_prompt_with_schema(client, session, prompt, schema, opts) do
+         :ok <- SessionRegistry.register(session.id, self()),
+         {:ok, stream} <- run_prompt_with_schema(client, session, prompt, schema, normalized_opts) do
       # Collect all events and extract structured output
       events = Enum.to_list(stream)
 
@@ -175,9 +194,15 @@ defmodule Jido.Opencode.Adapter do
       if structured_output do
         {:ok, structured_output}
       else
-        {:error, :no_structured_output}
+        {:error, Error.execution_error("No structured output received", %{})}
       end
     else
+      {:error, reason} when is_atom(reason) ->
+        {:error, Error.validation_error("Invalid options", %{field: reason})}
+
+      {:error, %{__exception__: true} = error} ->
+        {:error, error}
+
       {:error, reason} ->
         {:error, Error.execution_error("OpenCode run_with_schema failed", %{reason: reason})}
     end

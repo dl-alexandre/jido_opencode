@@ -29,6 +29,8 @@ defmodule Jido.Opencode do
   and `Jido.Opencode.Client` for the HTTP client.
   """
 
+  alias Jido.Opencode.Compatibility
+
   @doc """
   Returns the adapter module.
   """
@@ -44,5 +46,37 @@ defmodule Jido.Opencode do
   """
   def run_with_schema(prompt, schema, opts \\ []) do
     Jido.Opencode.Adapter.run_with_schema(prompt, schema, opts)
+  end
+
+  @doc """
+  Returns the installed OpenCode CLI version.
+
+  ## Examples
+
+      iex> Jido.Opencode.version()
+      {:ok, "2.7.0"}
+
+      iex> Jido.Opencode.version()
+      {:error, :not_installed}
+
+  """
+  def version do
+    Compatibility.version()
+  end
+
+  @doc """
+  Checks if the OpenCode CLI is installed.
+
+  ## Examples
+
+      iex> Jido.Opencode.cli_installed?()
+      true
+
+      iex> Jido.Opencode.cli_installed?()
+      false
+
+  """
+  def cli_installed? do
+    Compatibility.cli_installed?()
   end
 end
