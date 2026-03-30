@@ -128,6 +128,61 @@ defmodule Jido.Opencode.Adapter do
     end
   end
 
+  @doc """
+  Run a prompt with structured output using JSON Schema.
+
+  ## Example
+
+      schema = %{
+        type: "object",
+        properties: %{
+          company: %{type: "string"},
+          founded: %{type: "number"}
+        },
+        required: ["company"]
+      }
+
+      {:ok, result} = Jido.Opencode.Adapter.run_with_schema(
+        "Tell me about Anthropic",
+        schema,
+        cwd: "/tmp"
+      )
+
+  ## Returns
+
+    * `{:ok, map()}` - Parsed structured output
+    * `{:error, term()}` - On failure
+
+  """
+  def run_with_schema(prompt, schema, opts \\ []) do
+    with {:ok, client} <- ensure_client(opts),
+         {:ok, session} <- create_session(client, %{title: "Schema Output Session"}),
+         {:ok, stream} <- run_prompt_with_schema(client, session, prompt, schema, opts) do
+      # Collect all events and extract structured output
+      events = Enum.to_list(stream)
+
+      # Find the structured output event
+      structured_output =
+        events
+        |> Enum.find_value(fn event ->
+          if event["type"] == "message" && event["info"]["structured_output"] do
+            event["info"]["structured_output"]
+          else
+            nil
+          end
+        end)
+
+      if structured_output do
+        {:ok, structured_output}
+      else
+        {:error, :no_structured_output}
+      end
+    else
+      {:error, reason} ->
+        {:error, Error.execution_error("OpenCode run_with_schema failed", %{reason: reason})}
+    end
+  end
+
   # Private functions
 
   defp ensure_client(opts) do
@@ -183,6 +238,19 @@ defmodule Jido.Opencode.Adapter do
       else
         body
       end
+
+    Client.session_prompt(client, session.id, body)
+  end
+
+  defp run_prompt_with_schema(client, session, prompt, schema, opts) do
+    body = %{
+      model: get_model_config(opts),
+      parts: [%{type: "text", text: prompt}],
+      format: %{
+        type: "json_schema",
+        schema: schema
+      }
+    }
 
     Client.session_prompt(client, session.id, body)
   end
